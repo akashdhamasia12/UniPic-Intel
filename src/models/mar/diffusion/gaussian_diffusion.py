@@ -508,7 +508,8 @@ class GaussianDiffusion:
             indices = tqdm(indices)
 
         for i in indices:
-            t = th.tensor([i] * shape[0]).cuda()
+            # t = th.tensor([i] * shape[0]).cuda()
+            t = th.tensor([i] * shape[0]).to("xpu")
             with th.no_grad():
                 out = self.p_sample(
                     model,

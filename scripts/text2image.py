@@ -4,6 +4,7 @@ from PIL import Image
 from mmengine.config import Config
 import argparse
 from einops import rearrange
+# import os
 
 
 if __name__ == "__main__":
@@ -15,15 +16,27 @@ if __name__ == "__main__":
     parser.add_argument("--cfg", type=float, default=3.0)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument('--cfg_schedule', type=str, default='constant')
-    parser.add_argument('--num_iter', type=int, default=32)
-    parser.add_argument('--grid_size', type=int, default=2)
+    parser.add_argument('--num_iter', type=int, default=8)
+    parser.add_argument('--grid_size', type=int, default=1)
     parser.add_argument('--image_size', type=int, default=1024)
     parser.add_argument('--output', type=str, default='output.jpg')
+
+    # os.environ.setdefault("PYTORCH_XPU_FORCE_FALLBACK", "1")
+    # os.environ.setdefault("PYTORCH_XPU_MEMORY_FRACTION", "0.90")
+
     args = parser.parse_args()
 
+    print(f"Memory reserved: {torch.xpu.memory_reserved() / (1024 ** 2):.2f} MB")
+    print(f"Memory allocated: {torch.xpu.memory_allocated() / (1024 ** 2):.2f} MB")
+
     config = Config.fromfile(args.config)
-    model = BUILDER.build(config.model).eval().cuda()
+    # model = BUILDER.build(config.model).eval().cuda()
+    model = BUILDER.build(config.model).eval().to("xpu")
     model = model.to(model.dtype)
+
+    #Addition
+    # model = torch.compile(model)
+
     checkpoint = torch.load(args.checkpoint)
     info = model.load_state_dict(checkpoint, strict=False)
     args.prompt = f"Generate an image: {args.prompt}"
@@ -55,9 +68,34 @@ if __name__ == "__main__":
  
     m = n = args.image_size // 16
 
+    # torch.xpu.set_per_process_memory_fraction(0.8)
+    torch.xpu.reset_peak_memory_stats()
+    torch.xpu.empty_cache()
+
+    # with torch.no_grad():
+    #     # dtype = torch.bfloat16 if torch.xpu.is_bf16_supported() else torch.float16
+    #     dtype = torch.float16
+    #     with torch.autocast(device_type="xpu", dtype=dtype):
+    # print("Before sampling:")
+    # # print(torch.xpu.memory_stats())
+    # print(f"Max memory allocated: {torch.xpu.max_memory_allocated() / (1024 ** 2):.2f} MB")
+    # print(f"Memory reserved: {torch.xpu.memory_reserved() / (1024 ** 2):.2f} MB")
+    # print(f"Memory allocated: {torch.xpu.memory_allocated() / (1024 ** 2):.2f} MB")
+    # try:
     samples = model.sample(input_ids=input_ids, attention_mask=attention_mask,
-                           num_iter=args.num_iter, cfg=args.cfg, cfg_schedule=args.cfg_schedule,
-                           temperature=args.temperature, progress=True, image_shape=(m, n))
+                        num_iter=args.num_iter, cfg=args.cfg, cfg_schedule=args.cfg_schedule,
+                        temperature=args.temperature, progress=True, image_shape=(m, n))
+    # except RuntimeError as e:
+    #     print("RuntimeError occurred!")
+    #     print(e)
+    #     # print(torch.xpu.memory_stats())
+
+    # print("After sampling:")
+    # # print(torch.xpu.memory_stats())
+    # print(f"Max memory allocated: {torch.xpu.max_memory_allocated() / (1024 ** 2):.2f} MB")
+    # print(f"Memory reserved: {torch.xpu.memory_reserved() / (1024 ** 2):.2f} MB")
+    # print(f"Memory allocated: {torch.xpu.memory_allocated() / (1024 ** 2):.2f} MB")
+
     samples = rearrange(samples, '(m n) c h w -> (m h) (n w) c', m=args.grid_size, n=args.grid_size)
     samples = torch.clamp(
         127.5 * samples + 128.0, 0, 255).to("cpu", dtype=torch.uint8).numpy()
